@@ -401,7 +401,7 @@ function renderNode(node, x, y) {
         const gx = x + node.child._w + HGAP;
         const gy = y + (node._h - GH) / 2;
         drawGateSVG('NOT', gx, gy, GW, GH);
-        drawWireSVG(node.child._outX, node.child._outY, gx, gy + GH / 2);
+        routeWire(node.child._outX, node.child._outY, gx, gy + GH / 2);
 
         node._outX = gx + GW + 8;
         node._outY = gy + GH / 2;
@@ -418,8 +418,8 @@ function renderNode(node, x, y) {
     const mainY = y + (node._h - GH) / 2;
     drawGateSVG(node.type, mainX, mainY, GW, GH);
 
-    drawWireSVG(node.left._outX, node.left._outY, mainX, mainY + GH * 0.3);
-    drawWireSVG(node.right._outX, node.right._outY, mainX, mainY + GH * 0.7);
+    routeWire(node.left._outX, node.left._outY, mainX, mainY + GH * 0.3);
+    routeWire(node.right._outX, node.right._outY, mainX, mainY + GH * 0.7);
 
     const hasBubble = BUBBLE_GATES.has(node.type);
     node._outX = mainX + GW + (hasBubble ? 10 : 2);
@@ -440,59 +440,101 @@ function drawGateSVG(type, x, y, w, h) {
     }
 }
 
-function drawWireSVG(x1, y1, x2, y2) {
-    const mx = x1 + (x2 - x1) * 0.55;
-    svgElements.push(
-        `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
-      fill="none" stroke="rgba(148,163,184,0.5)" stroke-width="1.5"/>`
-    );
+/* ── Segment store for crossing-detection ── */
+let _segments = [];
+
+/* Store one axis-aligned connection as up to 3 orthogonal segments (H→V→H) */
+function routeWire(x1, y1, x2, y2) {
+    // Use 60% of the horizontal distance as the elbow column, snapped to integer
+    const elbowX = Math.round(x1 + (x2 - x1) * 0.5);
+    if (x1 !== elbowX) _segments.push({ x1, y1, x2: elbowX, y2: y1 });
+    if (y1 !== y2) _segments.push({ x1: elbowX, y1, x2: elbowX, y2 });
+    if (elbowX !== x2) _segments.push({ x1: elbowX, y1: y2, x2, y2 });
+}
+
+/* Render all segments at once, adding bridge arcs at crossings */
+function flushWires() {
+    const EPS = 0.5, BR = 5;
+    const stroke = `fill="none" stroke="rgba(148,163,184,0.55)" stroke-width="1.5"`;
+
+    // Normalise segments so x1<=x2, y1<=y2
+    const segs = _segments.map(s => ({
+        x1: Math.min(s.x1, s.x2), y1: Math.min(s.y1, s.y2),
+        x2: Math.max(s.x1, s.x2), y2: Math.max(s.y1, s.y2)
+    }));
+
+    const horiz = segs.filter(s => Math.abs(s.y2 - s.y1) < EPS);
+    const vert = segs.filter(s => Math.abs(s.x2 - s.x1) < EPS);
+
+    // For each horizontal seg, find x-coords where a vertical seg crosses it
+    const bridgeMap = new Map();
+    horiz.forEach((h, hi) => {
+        const bxs = [];
+        vert.forEach(v => {
+            if (h.x1 + EPS < v.x1 && v.x1 < h.x2 - EPS &&
+                v.y1 + EPS < h.y1 && h.y1 < v.y2 - EPS) {
+                bxs.push(v.x1);
+            }
+        });
+        bridgeMap.set(hi, bxs.sort((a, b) => a - b));
+    });
+
+    // Draw vertical segments plain
+    vert.forEach(v => {
+        svgElements.push(`<line x1="${v.x1}" y1="${v.y1}" x2="${v.x2}" y2="${v.y2}" ${stroke}/>`);
+    });
+
+    // Draw horizontal segments with bridge arcs at crossings
+    horiz.forEach((h, hi) => {
+        const bxs = bridgeMap.get(hi);
+        let d = `M${h.x1},${h.y1}`;
+        bxs.forEach(bx => {
+            d += ` H${bx - BR} A${BR},${BR} 0 0 1 ${bx + BR},${h.y1}`;
+        });
+        d += ` H${h.x2}`;
+        svgElements.push(`<path d="${d}" ${stroke}/>`);
+    });
 }
 
 function generateCircuitSVG(node, mode) {
     svgElements = [];
+    _segments = [];
     _varPos = {};
 
     const converted = convertAST(JSON.parse(JSON.stringify(node)), mode);
-
-    // Gather all unique variable names (sorted)
     const allVars = Array.from(gatherAllVars(converted)).sort();
-
-    // Layout to get total height
     layoutAST(converted);
 
     const PAD = 48;
-    const INPUT_X = PAD + 60;          // x where variable label stubs end
-    const VAR_SPACING = Math.max(GH + 12, 52);
-    const inputPanelH = allVars.length * VAR_SPACING;
+    const INPUT_X = PAD + 64;
+    const VAR_SP = Math.max(GH + 14, 54);
+    const inputH = allVars.length * VAR_SP;
     const circuitH = converted._h;
-    const totalH = Math.max(inputPanelH, circuitH) + PAD * 2;
+    const totalH = Math.max(inputH, circuitH) + PAD * 2;
 
-    // Centre variables vertically relative to the circuit
-    const varStartY = PAD + (totalH - PAD * 2 - inputPanelH) / 2 + VAR_SPACING / 2;
-
-    // Assign fixed positions to each unique variable
+    const varStartY = PAD + (totalH - PAD * 2 - inputH) / 2 + VAR_SP / 2;
     allVars.forEach((v, i) => {
-        _varPos[v] = { x: INPUT_X, y: varStartY + i * VAR_SPACING, drawn: false };
+        _varPos[v] = { x: INPUT_X, y: varStartY + i * VAR_SP, drawn: false };
     });
 
-    // Shift circuit to start after the input column
-    const circuitStartX = INPUT_X + 20;
-    const circuitStartY = PAD + (totalH - PAD * 2 - circuitH) / 2;
+    const circuitX = INPUT_X + 22;
+    const circuitY = PAD + (totalH - PAD * 2 - circuitH) / 2;
 
-    renderNode(converted, circuitStartX, circuitStartY);
+    renderNode(converted, circuitX, circuitY);
+    flushWires();   // draw all wires with bridge arcs in one pass
 
     // Output marker
     const outX = converted._outX, outY = converted._outY;
     svgElements.push(`
-    <line x1="${outX}" y1="${outY}" x2="${outX + 28}" y2="${outY}" stroke="rgba(148,163,184,0.6)" stroke-width="2"/>
-    <circle cx="${outX + 28}" cy="${outY}" r="6" fill="#34d399" stroke="#34d399" opacity="0.85"/>
+    <line x1="${outX}" y1="${outY}" x2="${outX + 28}" y2="${outY}" stroke="rgba(148,163,184,0.6)" stroke-width="1.5"/>
+    <circle cx="${outX + 28}" cy="${outY}" r="6" fill="#34d399" opacity="0.9"/>
     <text x="${outX + 40}" y="${outY}" dominant-baseline="middle" font-size="12" fill="#34d399" font-weight="bold">OUT</text>
   `);
 
-    const totalW = outX + 80;
+    const svgW = Math.max(outX + 80, 360);
     return `<svg xmlns="http://www.w3.org/2000/svg"
-    width="${Math.max(totalW, 360)}" height="${Math.max(totalH, 120)}"
-    viewBox="0 0 ${Math.max(totalW, 360)} ${Math.max(totalH, 120)}">
+    width="${svgW}" height="${Math.max(totalH, 120)}"
+    viewBox="0 0 ${svgW} ${Math.max(totalH, 120)}">
     ${svgElements.join('\n')}
   </svg>`;
 }
