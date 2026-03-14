@@ -323,79 +323,103 @@ function convertAST(node, mode) {
     return n;
 }
 
-/* ── Layout engine: assign x,y,w,h to each node recursively ── */
-const GW = 72, GH = 48, HGAP = 100, VGAP = 14;
+/* ── Layout engine ── */
+const GW = 72, GH = 48, HGAP = 110, VGAP = 16;
+
+// Shared input variable positions (populated before each render)
+let _varPos = {};   // { varName: { x, y, drawn } }
+
+/* Collect all unique variable names from the AST */
+function gatherAllVars(node, out = new Set()) {
+    if (!node) return out;
+    if (node.type === 'VAR') { out.add(node.name); return out; }
+    if (node.type === 'NOT') return gatherAllVars(node.child, out);
+    gatherAllVars(node.left, out);
+    gatherAllVars(node.right, out);
+    return out;
+}
 
 function layoutAST(node) {
-    // Returns { width, height, layers: [{node, x, y}] }
     if (node.type === 'VAR') {
-        node._w = 0; node._h = GH; node._cx = 0; node._cy = GH / 2;
+        // VAR takes no width — its position comes from _varPos
+        node._w = 0; node._h = GH;
         return;
     }
     if (node.type === 'NOT') {
         layoutAST(node.child);
         node._w = node.child._w + GW + HGAP;
         node._h = Math.max(GH, node.child._h);
-        node._cy = node._h / 2;
     } else {
-        // Binary gate
         layoutAST(node.left);
         layoutAST(node.right);
         node.left._offsetY = 0;
         node.right._offsetY = node.left._h + VGAP;
         node._h = node.left._h + VGAP + node.right._h;
         node._w = Math.max(node.left._w, node.right._w) + GW + HGAP;
-        node._cy = node._h / 2;
     }
 }
 
 let svgElements = [];
-let nodePositions = [];
 
-function renderNode(node, x, y, color) {
+function renderNode(node, x, y) {
     if (node.type === 'VAR') {
-        // Input label
-        const cx = x, cy = y + GH / 2;
-        svgElements.push(`<text x="${cx - 8}" y="${cy}" text-anchor="end" dominant-baseline="middle"
-      font-family="JetBrains Mono,monospace" font-size="14" font-weight="bold" fill="${color}">${node.name}</text>`);
-        node._outX = cx; node._outY = cy;
+        const pos = _varPos[node.name];
+        if (!pos) return;  // safety
+
+        if (!pos.drawn) {
+            // Draw the label text exactly once
+            svgElements.push(
+                `<text x="${pos.x - 10}" y="${pos.y}"
+          text-anchor="end" dominant-baseline="middle"
+          font-family="JetBrains Mono,monospace" font-size="14"
+          font-weight="bold" fill="#94a3b8">${node.name}</text>`
+            );
+            // Draw a small horizontal stub to the right of the label
+            svgElements.push(
+                `<line x1="${pos.x - 8}" y1="${pos.y}" x2="${pos.x}" y2="${pos.y}"
+          stroke="rgba(148,163,184,0.4)" stroke-width="1.5"/>`
+            );
+            pos.drawn = true;
+        } else {
+            // Second+ use: draw a small junction dot at the shared wire point
+            svgElements.push(
+                `<circle cx="${pos.x}" cy="${pos.y}" r="3"
+          fill="#94a3b8" opacity="0.7"/>`
+            );
+        }
+
+        node._outX = pos.x;
+        node._outY = pos.y;
         return;
     }
 
     if (node.type === 'NOT') {
         const childX = x;
         const childY = y + (node._h - node.child._h) / 2;
-        renderNode(node.child, childX, childY, color);
+        renderNode(node.child, childX, childY);
 
         const gx = x + node.child._w + HGAP;
         const gy = y + (node._h - GH) / 2;
         drawGateSVG('NOT', gx, gy, GW, GH);
-        // Wire from child out to NOT input
-        const inY = gy + GH / 2;
-        const outChildX = node.child._outX, outChildY = node.child._outY;
-        drawWireSVG(outChildX, outChildY, gx, inY);
+        drawWireSVG(node.child._outX, node.child._outY, gx, gy + GH / 2);
 
         node._outX = gx + GW + 8;
         node._outY = gy + GH / 2;
         return;
     }
 
-    // Binary gates (AND, OR, NAND, NOR, XOR, XNOR)
+    // Binary gate
     const lx = x, ly = y + node.left._offsetY;
-    renderNode(node.left, lx, ly, color);
+    renderNode(node.left, lx, ly);
     const rx = x, ry = y + node.right._offsetY;
-    renderNode(node.right, rx, ry, color);
+    renderNode(node.right, rx, ry);
 
     const mainX = x + Math.max(node.left._w, node.right._w) + HGAP;
     const mainY = y + (node._h - GH) / 2;
     drawGateSVG(node.type, mainX, mainY, GW, GH);
 
-    // Wires: left/right children output connect to gate inputs
-    const numInputs = 2;
-    const in1Y = mainY + GH * 0.3;
-    const in2Y = mainY + GH * 0.7;
-    drawWireSVG(node.left._outX, node.left._outY, mainX, in1Y);
-    drawWireSVG(node.right._outX, node.right._outY, mainX, in2Y);
+    drawWireSVG(node.left._outX, node.left._outY, mainX, mainY + GH * 0.3);
+    drawWireSVG(node.right._outX, node.right._outY, mainX, mainY + GH * 0.7);
 
     const hasBubble = BUBBLE_GATES.has(node.type);
     node._outX = mainX + GW + (hasBubble ? 10 : 2);
@@ -406,55 +430,73 @@ function drawGateSVG(type, x, y, w, h) {
     const color = GATE_COLORS_SVG[type] || '#4f8ef7';
     const pathFn = GATE_PATHS[type] || GATE_PATHS['AND'];
     const hasBubble = BUBBLE_GATES.has(type);
-    // Gate body
     svgElements.push(`
     <path d="${pathFn(x, y, w, h)}" fill="${color}22" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
     <text x="${x + w * (hasBubble ? 0.38 : 0.5)}" y="${y + h / 2}" text-anchor="middle" dominant-baseline="middle"
       font-family="JetBrains Mono,monospace" font-size="10" font-weight="bold" fill="${color}">${escHtml(type)}</text>
   `);
-    // Output bubble for inverting gates
     if (hasBubble) {
-        const bx = x + w + 5, by = y + h / 2;
-        svgElements.push(`<circle cx="${bx}" cy="${by}" r="5" fill="none" stroke="${color}" stroke-width="2"/>`);
+        svgElements.push(`<circle cx="${x + w + 5}" cy="${y + h / 2}" r="5" fill="none" stroke="${color}" stroke-width="2"/>`);
     }
 }
 
 function drawWireSVG(x1, y1, x2, y2) {
-    const mx = (x1 + x2) / 2;
-    svgElements.push(`<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
-    fill="none" stroke="rgba(148,163,184,0.5)" stroke-width="1.5"/>`);
+    const mx = x1 + (x2 - x1) * 0.55;
+    svgElements.push(
+        `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
+      fill="none" stroke="rgba(148,163,184,0.5)" stroke-width="1.5"/>`
+    );
 }
 
 function generateCircuitSVG(node, mode) {
     svgElements = [];
+    _varPos = {};
+
     const converted = convertAST(JSON.parse(JSON.stringify(node)), mode);
+
+    // Gather all unique variable names (sorted)
+    const allVars = Array.from(gatherAllVars(converted)).sort();
+
+    // Layout to get total height
     layoutAST(converted);
 
-    const PAD = 60;
-    const totalW = converted._w + PAD * 2 + 40;
-    const totalH = converted._h + PAD * 2;
+    const PAD = 48;
+    const INPUT_X = PAD + 60;          // x where variable label stubs end
+    const VAR_SPACING = Math.max(GH + 12, 52);
+    const inputPanelH = allVars.length * VAR_SPACING;
+    const circuitH = converted._h;
+    const totalH = Math.max(inputPanelH, circuitH) + PAD * 2;
 
-    renderNode(converted, PAD, PAD, '#4f8ef7');
+    // Centre variables vertically relative to the circuit
+    const varStartY = PAD + (totalH - PAD * 2 - inputPanelH) / 2 + VAR_SPACING / 2;
 
-    // Output line to right edge
+    // Assign fixed positions to each unique variable
+    allVars.forEach((v, i) => {
+        _varPos[v] = { x: INPUT_X, y: varStartY + i * VAR_SPACING, drawn: false };
+    });
+
+    // Shift circuit to start after the input column
+    const circuitStartX = INPUT_X + 20;
+    const circuitStartY = PAD + (totalH - PAD * 2 - circuitH) / 2;
+
+    renderNode(converted, circuitStartX, circuitStartY);
+
+    // Output marker
     const outX = converted._outX, outY = converted._outY;
     svgElements.push(`
-    <line x1="${outX}" y1="${outY}" x2="${outX + 30}" y2="${outY}" stroke="rgba(148,163,184,0.6)" stroke-width="2"/>
-    <circle cx="${outX + 30}" cy="${outY}" r="6" fill="#34d399" stroke="#34d399" opacity="0.8"/>
-    <text x="${outX + 42}" y="${outY}" dominant-baseline="middle" font-size="12" fill="#34d399" font-weight="bold">OUT</text>
+    <line x1="${outX}" y1="${outY}" x2="${outX + 28}" y2="${outY}" stroke="rgba(148,163,184,0.6)" stroke-width="2"/>
+    <circle cx="${outX + 28}" cy="${outY}" r="6" fill="#34d399" stroke="#34d399" opacity="0.85"/>
+    <text x="${outX + 40}" y="${outY}" dominant-baseline="middle" font-size="12" fill="#34d399" font-weight="bold">OUT</text>
   `);
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(totalW, 400)}" height="${Math.max(totalH, 120)}" viewBox="0 0 ${Math.max(totalW, 400)} ${Math.max(totalH, 120)}">
+    const totalW = outX + 80;
+    return `<svg xmlns="http://www.w3.org/2000/svg"
+    width="${Math.max(totalW, 360)}" height="${Math.max(totalH, 120)}"
+    viewBox="0 0 ${Math.max(totalW, 360)} ${Math.max(totalH, 120)}">
     ${svgElements.join('\n')}
   </svg>`;
 }
 
-function astToExprLabel(node) {
-    if (!node) return '';
-    if (node.type === 'VAR') return node.name;
-    if (node.type === 'NOT') return `NAND(${astToExprLabel(node.left)},${astToExprLabel(node.left)})`;
-    return `${node.type}(${astToExprLabel(node.left)},${astToExprLabel(node.right)})`;
-}
 
 /* ──────────────────────────────────────────
    UI — SOLVER
