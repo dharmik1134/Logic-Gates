@@ -20,16 +20,17 @@ const GATE_H = 60;
 const PORT_R = 7;
 
 const GATE_COLORS = {
-    AND: '#4f8ef7',
-    OR: '#a78bfa',
-    NOT: '#34d399',
-    NAND: '#f472b6',
-    NOR: '#fb923c',
-    XOR: '#fbbf24',
+    AND: '#38bdf8',
+    OR: '#38bdf8',
+    NOT: '#38bdf8',
+    NAND: '#38bdf8',
+    NOR: '#38bdf8',
+    XOR: '#38bdf8',
     XNOR: '#38bdf8',
-    INPUT: '#94a3b8',
-    OUTPUT: '#f87171',
+    INPUT: '#22c55e',
+    OUTPUT: '#38bdf8',
 };
+
 
 function gateInputCount(type) {
     if (type === 'NOT') return 1;
@@ -73,73 +74,221 @@ function getPortPositions(gate) {
 
 function drawGate(ctx, gate) {
     const { x, y, type, value } = gate;
-    const color = GATE_COLORS[type] || '#4f8ef7';
-    const inCount = gateInputCount(type);
     const ports = getPortPositions(gate);
+    const isHovered = gate === SIM.hoverGate;
+    const isDragging = gate === SIM.dragging;
 
-    // Shadow/glow
     ctx.save();
-    ctx.shadowColor = color;
-    ctx.shadowBlur = gate === SIM.hoverGate ? 18 : 8;
 
-    // Body
-    const grad = ctx.createLinearGradient(x, y, x + GATE_W, y + GATE_H);
-    grad.addColorStop(0, hexAlpha(color, 0.25));
-    grad.addColorStop(1, hexAlpha(color, 0.1));
-    ctx.fillStyle = grad;
-    roundRect(ctx, x, y, GATE_W, GATE_H, 12);
+    // 1. Gate chassis background & border
+    ctx.fillStyle = '#141824'; // --surface-card
+    roundRect(ctx, x, y, GATE_W, GATE_H, 8);
     ctx.fill();
 
-    ctx.strokeStyle = hexAlpha(color, 0.7);
-    ctx.lineWidth = 2;
-    roundRect(ctx, x, y, GATE_W, GATE_H, 12);
+    ctx.strokeStyle = isDragging ? '#38bdf8' : (isHovered ? 'rgba(56, 189, 248, 0.6)' : 'rgba(226, 232, 240, 0.16)');
+    ctx.lineWidth = (isDragging || isHovered) ? 1.5 : 1;
+    roundRect(ctx, x, y, GATE_W, GATE_H, 8);
     ctx.stroke();
-    ctx.restore();
 
-    // Label
-    ctx.fillStyle = '#f1f5f9';
-    ctx.font = 'bold 13px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(type, x + GATE_W / 2, y + GATE_H / 2);
+    // 2. Type label at top
+    ctx.fillStyle = isHovered ? '#38bdf8' : '#94a3b8';
+    ctx.font = '600 10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(type, x + 8, y + 6);
 
-    // Value badge
-    if (type !== 'INPUT') {
-        ctx.fillStyle = value ? '#34d399' : '#475569';
-        ctx.beginPath();
-        ctx.arc(x + GATE_W - 10, y + 10, 5, 0, Math.PI * 2);
+    // 3. Logic state indicator LED (top right)
+    const ledX = x + GATE_W - 10;
+    const ledY = y + 10;
+    ctx.beginPath();
+    ctx.arc(ledX, ledY, 3.5, 0, Math.PI * 2);
+    if (value) {
+        ctx.fillStyle = '#22c55e'; // Precision LED green
+        ctx.shadowColor = '#22c55e';
+        ctx.shadowBlur = 6;
+        ctx.fill();
+    } else {
+        ctx.fillStyle = '#64748b'; // Muted slate
+        ctx.shadowBlur = 0;
         ctx.fill();
     }
+    ctx.restore();
 
-    // Input ports
-    ports.inputs.forEach((p, i) => {
-        const connected = SIM.wires.some(w => w.toGate === gate.id && w.toPort === i);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, PORT_R, 0, Math.PI * 2);
-        ctx.fillStyle = connected ? hexAlpha(color, 0.6) : 'rgba(255,255,255,0.08)';
-        ctx.fill();
-        ctx.strokeStyle = hexAlpha(color, 0.5);
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        // Value dot for INPUT type
-        if (type === 'INPUT' && i === 0) {
-            ctx.fillStyle = gate.value ? '#34d399' : '#dc2626';
-            ctx.font = 'bold 11px Inter';
+    // 4. Draw IEEE Symbol in center
+    ctx.save();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1.6;
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.05)';
+
+    const cx = x + GATE_W / 2;
+    const cy = y + GATE_H / 2 + 3;
+    const gw = 32;
+    const gh = 26;
+    const gx = cx - gw / 2;
+    const gy = cy - gh / 2;
+
+    switch (type) {
+        case 'AND': {
+            ctx.beginPath();
+            ctx.moveTo(gx, gy);
+            ctx.lineTo(gx + gw * 0.5, gy);
+            ctx.quadraticCurveTo(gx + gw, gy, gx + gw, cy);
+            ctx.quadraticCurveTo(gx + gw, gy + gh, gx + gw * 0.5, gy + gh);
+            ctx.lineTo(gx, gy + gh);
+            ctx.closePath();
+            ctx.stroke();
+            break;
+        }
+        case 'OR': {
+            ctx.beginPath();
+            ctx.moveTo(gx, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.35, gy, gx + gw, cy);
+            ctx.quadraticCurveTo(gx + gw * 0.35, gy + gh, gx, gy + gh);
+            ctx.quadraticCurveTo(gx + gw * 0.25, cy, gx, gy);
+            ctx.stroke();
+            break;
+        }
+        case 'NOT': {
+            ctx.beginPath();
+            ctx.moveTo(gx, gy);
+            ctx.lineTo(gx + gw * 0.75, cy);
+            ctx.lineTo(gx, gy + gh);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(gx + gw * 0.75 + 3, cy, 3, 0, Math.PI * 2);
+            ctx.stroke();
+            break;
+        }
+        case 'NAND': {
+            ctx.beginPath();
+            ctx.moveTo(gx, gy);
+            ctx.lineTo(gx + gw * 0.45, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.8, gy, gx + gw * 0.8, cy);
+            ctx.quadraticCurveTo(gx + gw * 0.8, gy + gh, gx + gw * 0.45, gy + gh);
+            ctx.lineTo(gx, gy + gh);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(gx + gw * 0.8 + 3, cy, 3, 0, Math.PI * 2);
+            ctx.stroke();
+            break;
+        }
+        case 'NOR': {
+            ctx.beginPath();
+            ctx.moveTo(gx, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.3, gy, gx + gw * 0.8, cy);
+            ctx.quadraticCurveTo(gx + gw * 0.3, gy + gh, gx, gy + gh);
+            ctx.quadraticCurveTo(gx + gw * 0.2, cy, gx, gy);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(gx + gw * 0.8 + 3, cy, 3, 0, Math.PI * 2);
+            ctx.stroke();
+            break;
+        }
+        case 'XOR': {
+            ctx.beginPath();
+            ctx.moveTo(gx - 4, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.25 - 4, cy, gx - 4, gy + gh);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(gx + 2, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.4 + 2, gy, gx + gw, cy);
+            ctx.quadraticCurveTo(gx + gw * 0.4 + 2, gy + gh, gx + 2, gy + gh);
+            ctx.quadraticCurveTo(gx + gw * 0.25 + 2, cy, gx + 2, gy);
+            ctx.stroke();
+            break;
+        }
+        case 'XNOR': {
+            ctx.beginPath();
+            ctx.moveTo(gx - 4, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.25 - 4, cy, gx - 4, gy + gh);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(gx + 2, gy);
+            ctx.quadraticCurveTo(gx + gw * 0.35 + 2, gy, gx + gw * 0.8, cy);
+            ctx.quadraticCurveTo(gx + gw * 0.35 + 2, gy + gh, gx + 2, gy + gh);
+            ctx.quadraticCurveTo(gx + gw * 0.25 + 2, cy, gx + 2, gy);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(gx + gw * 0.8 + 3, cy, 3, 0, Math.PI * 2);
+            ctx.stroke();
+            break;
+        }
+        case 'INPUT': {
+            ctx.fillStyle = '#090b10';
+            roundRect(ctx, cx - 18, cy - 10, 36, 20, 10);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(226, 232, 240, 0.2)';
+            roundRect(ctx, cx - 18, cy - 10, 36, 20, 10);
+            ctx.stroke();
+
+            const knobX = value ? cx + 8 : cx - 8;
+            ctx.beginPath();
+            ctx.arc(knobX, cy, 7, 0, Math.PI * 2);
+            ctx.fillStyle = value ? '#22c55e' : '#64748b';
+            ctx.fill();
+
+            ctx.fillStyle = '#f1f5f9';
+            ctx.font = 'bold 10px "JetBrains Mono", monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(gate.value ? '1' : '0', x + GATE_W / 2, y + GATE_H / 2 + 14);
+            ctx.fillText(value ? '1' : '0', value ? cx - 7 : cx + 7, cy);
+            break;
         }
+        case 'OUTPUT': {
+            ctx.beginPath();
+            ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+            ctx.fillStyle = '#090b10';
+            ctx.fill();
+            ctx.strokeStyle = value ? '#22c55e' : 'rgba(226, 232, 240, 0.2)';
+            ctx.stroke();
+
+            ctx.fillStyle = value ? '#22c55e' : '#64748b';
+            ctx.font = 'bold 12px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(value ? '1' : '0', cx, cy);
+            break;
+        }
+    }
+    ctx.restore();
+
+    // 5. Input Ports
+    ports.inputs.forEach((p, i) => {
+        const inWire = SIM.wires.find(w => w.toGate === gate.id && w.toPort === i);
+        const hasSignal = inWire ? Boolean(SIM.gates.find(g => g.id === inWire.fromGate)?.value) : false;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, PORT_R, 0, Math.PI * 2);
+        if (inWire) {
+            ctx.fillStyle = hasSignal ? '#22c55e' : '#1c2232';
+            ctx.fill();
+            ctx.strokeStyle = hasSignal ? '#22c55e' : '#64748b';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = 'rgba(226, 232, 240, 0.06)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(226, 232, 240, 0.24)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        ctx.restore();
     });
 
-    // Output port
-    if (type !== 'OUTPUT' || true) {
+    // 6. Output Port (if not OUTPUT component)
+    if (type !== 'OUTPUT' && ports.output) {
+        ctx.save();
         ctx.beginPath();
         ctx.arc(ports.output.x, ports.output.y, PORT_R, 0, Math.PI * 2);
-        ctx.fillStyle = gate.value ? hexAlpha('#34d399', 0.8) : 'rgba(255,255,255,0.08)';
+        ctx.fillStyle = value ? '#22c55e' : '#1c2232';
         ctx.fill();
-        ctx.strokeStyle = gate.value ? '#34d399' : 'rgba(255,255,255,0.3)';
+        ctx.strokeStyle = value ? '#22c55e' : 'rgba(226, 232, 240, 0.3)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
+        ctx.restore();
     }
 }
 
@@ -149,6 +298,7 @@ function drawWire(ctx, wire) {
     if (!fromGate || !toGate) return;
     const from = getPortPositions(fromGate).output;
     const to = getPortPositions(toGate).inputs[wire.toPort];
+    if (!from || !to) return;
     const value = fromGate.value;
 
     ctx.save();
@@ -166,27 +316,59 @@ function drawWire(ctx, wire) {
 
 function drawAll() {
     const cvs = SIM.canvas;
-    const ctx = SIM.ctx;
+    if (!cvs) return;
+    const ctx = SIM.ctx || (cvs.getContext ? cvs.getContext('2d') : null);
+    if (!ctx) return;
+
     ctx.clearRect(0, 0, cvs.width, cvs.height);
 
-    // Grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < cvs.width; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cvs.height); ctx.stroke(); }
-    for (let y = 0; y < cvs.height; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cvs.width, y); ctx.stroke(); }
+    // 1. Technical background
+    ctx.fillStyle = '#0e121a';
+    ctx.fillRect(0, 0, cvs.width, cvs.height);
 
+    // 2. Technical coordinate grid lines (30px intervals for F41.4 & F41.5)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.04)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < cvs.width; x += 30) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, cvs.height);
+        ctx.stroke();
+    }
+    for (let y = 0; y < cvs.height; y += 30) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(cvs.width, y);
+        ctx.stroke();
+    }
+
+    // 3. Crisp technical coordinate dot-grid (20px intervals rgba(226, 232, 240, 0.08))
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.08)';
+    for (let dx = 20; dx < cvs.width; dx += 20) {
+        for (let dy = 20; dy < cvs.height; dy += 20) {
+            ctx.beginPath();
+            ctx.arc(dx, dy, 1, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    ctx.restore();
+
+    // 4. Render wires
     SIM.wires.forEach(w => drawWire(ctx, w));
+
+    // 5. Render gates
     SIM.gates.forEach(g => drawGate(ctx, g));
 
-    // Drawing wire in progress
+    // 6. Live connection guideline
     if (SIM.connecting) {
         const fromGate = SIM.gates.find(g => g.id === SIM.connecting.gateId);
         if (fromGate) {
             const from = getPortPositions(fromGate).output;
             ctx.save();
-            ctx.strokeStyle = 'rgba(79,142,247,0.6)';
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
             ctx.lineWidth = 2;
-            ctx.setLineDash([6, 3]);
+            ctx.setLineDash([5, 4]);
             ctx.beginPath();
             ctx.moveTo(from.x, from.y);
             ctx.lineTo(SIM.connecting.mouseX, SIM.connecting.mouseY);
@@ -195,39 +377,63 @@ function drawAll() {
         }
     }
 
-    if (SIM.gates.length === 0) {
-        document.querySelector('.sim-hint').classList.remove('hidden');
-    } else {
-        document.querySelector('.sim-hint').classList.add('hidden');
+    // 7. Empty-state guidance hint overlay
+    const hint = typeof document !== 'undefined' ? document.querySelector('.sim-hint') : null;
+    if (hint) {
+        if (SIM.gates.length === 0) {
+            hint.classList.remove('hidden');
+        } else {
+            hint.classList.add('hidden');
+        }
     }
 }
 
 function evaluate() {
-    // Topological sort and evaluate
+    // Topological sort and evaluate via Kahn's algorithm
     const inDegree = {};
     const adj = {};
-    SIM.gates.forEach(g => { inDegree[g.id] = 0; adj[g.id] = []; });
-    SIM.wires.forEach(w => { inDegree[w.toGate]++; adj[w.fromGate].push(w.toGate); });
+    SIM.gates.forEach(g => {
+        inDegree[g.id] = 0;
+        adj[g.id] = [];
+    });
+    SIM.wires.forEach(w => {
+        if (inDegree[w.toGate] !== undefined) inDegree[w.toGate]++;
+        if (adj[w.fromGate]) adj[w.fromGate].push(w.toGate);
+    });
 
-    const queue = SIM.gates.filter(g => inDegree[g.id] === 0).map(g => g.id);
+    const queue = SIM.gates.filter(g => (inDegree[g.id] || 0) === 0).map(g => g.id);
     const order = [];
     const tempIn = { ...inDegree };
     while (queue.length) {
         const id = queue.shift();
         order.push(id);
-        (adj[id] || []).forEach(next => { if (--tempIn[next] === 0) queue.push(next); });
+        (adj[id] || []).forEach(next => {
+            tempIn[next]--;
+            if (tempIn[next] === 0) queue.push(next);
+        });
     }
+
+    // Cycle safety: append any unvisited gates
+    const visitedSet = new Set(order);
+    SIM.gates.forEach(g => {
+        if (!visitedSet.has(g.id)) order.push(g.id);
+    });
 
     order.forEach(id => {
         const gate = SIM.gates.find(g => g.id === id);
         if (!gate) return;
+        if (gate.type === 'INPUT') return; // User-controlled value
+
         const inWires = SIM.wires.filter(w => w.toGate === id);
+        const inCount = gateInputCount(gate.type);
         const inputs = [];
+        for (let i = 0; i < inCount; i++) {
+            inputs[i] = 0; // Default unconnected inputs to 0
+        }
         inWires.forEach(w => {
             const src = SIM.gates.find(g => g.id === w.fromGate);
-            if (src) inputs[w.toPort] = src.value;
+            if (src) inputs[w.toPort] = src.value ?? 0;
         });
-        if (gate.type === 'INPUT') return; // value set by user
         gate.value = evalGate(gate.type, inputs);
     });
 
@@ -269,9 +475,10 @@ function hitInputPort(x, y) {
 
 function hitOutputPort(x, y) {
     for (const g of SIM.gates) {
+        if (g.type === 'OUTPUT') continue; // OUTPUT component has no output port
         const ports = getPortPositions(g);
         const op = ports.output;
-        if (Math.hypot(x - op.x, y - op.y) <= PORT_R + 6) return g;
+        if (op && Math.hypot(x - op.x, y - op.y) <= PORT_R + 6) return g;
     }
     return null;
 }
@@ -298,46 +505,57 @@ function hexAlpha(hex, alpha) {
 }
 
 let gateIdCounter = 1;
+let wireIdCounter = 1;
 
 function initSimulator() {
     const canvas = document.getElementById('simCanvas');
+    if (!canvas) return;
     SIM.canvas = canvas;
-    SIM.ctx = canvas.getContext('2d');
+    SIM.ctx = canvas.getContext ? canvas.getContext('2d') : null;
 
-    // Resize canvas
+    // Resize canvas to container
     function resize() {
-        const rect = canvas.parentElement.getBoundingClientRect();
+        if (!canvas.parentElement) return;
+        const rect = canvas.parentElement.getBoundingClientRect ? canvas.parentElement.getBoundingClientRect() : { width: 700, height: 500 };
         canvas.width = rect.width || 700;
         canvas.height = 500;
         drawAll();
     }
     resize();
-    window.addEventListener('resize', resize);
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('resize', resize);
+    }
 
     // Drag from toolbar
-    document.querySelectorAll('.gate-chip[draggable]').forEach(chip => {
+    const chips = document.querySelectorAll ? document.querySelectorAll('.gate-chip[draggable]') : [];
+    chips.forEach(chip => {
         chip.addEventListener('dragstart', e => {
-            e.dataTransfer.setData('gate-type', chip.dataset.gate);
+            if (e.dataTransfer && e.dataTransfer.setData) {
+                e.dataTransfer.setData('gate-type', chip.dataset.gate);
+            }
         });
     });
 
-    canvas.addEventListener('dragover', e => { e.preventDefault(); });
+    canvas.addEventListener('dragover', e => {
+        if (e.preventDefault) e.preventDefault();
+    });
+
     canvas.addEventListener('drop', e => {
-        e.preventDefault();
-        const type = e.dataTransfer.getData('gate-type');
+        if (e.preventDefault) e.preventDefault();
+        const type = e.dataTransfer ? e.dataTransfer.getData('gate-type') : null;
         if (!type) return;
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left - GATE_W / 2;
-        const y = e.clientY - rect.top - GATE_H / 2;
+        const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+        const x = (e.clientX ?? 0) - (rect.left ?? 0) - GATE_W / 2;
+        const y = (e.clientY ?? 0) - (rect.top ?? 0) - GATE_H / 2;
         SIM.gates.push({ id: gateIdCounter++, type, x, y, value: 0 });
         evaluate();
     });
 
     // Mouse events
     canvas.addEventListener('mousedown', e => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
+        const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+        const mx = (e.clientX ?? 0) - (rect.left ?? 0);
+        const my = (e.clientY ?? 0) - (rect.top ?? 0);
 
         // Check output port for wire drawing
         const outGate = hitOutputPort(mx, my);
@@ -346,13 +564,10 @@ function initSimulator() {
             return;
         }
 
-        // Check double click on INPUT to toggle
-        const inPort = hitInputPort(mx, my);
-
         const hit = hitTest(mx, my);
         if (hit) {
             if (hit.type === 'INPUT') {
-                // Toggle value on click
+                // Toggle value on click and re-evaluate
                 hit.value = hit.value ? 0 : 1;
                 evaluate();
                 return;
@@ -364,9 +579,9 @@ function initSimulator() {
     });
 
     canvas.addEventListener('mousemove', e => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
+        const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+        const mx = (e.clientX ?? 0) - (rect.left ?? 0);
+        const my = (e.clientY ?? 0) - (rect.top ?? 0);
 
         if (SIM.connecting) {
             SIM.connecting.mouseX = mx;
@@ -378,7 +593,7 @@ function initSimulator() {
         if (SIM.dragging) {
             SIM.dragging.x = mx - SIM.offsetX;
             SIM.dragging.y = my - SIM.offsetY;
-            evaluate();
+            drawAll();
             return;
         }
 
@@ -387,17 +602,24 @@ function initSimulator() {
     });
 
     canvas.addEventListener('mouseup', e => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
+        const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+        const mx = (e.clientX ?? 0) - (rect.left ?? 0);
+        const my = (e.clientY ?? 0) - (rect.top ?? 0);
 
         if (SIM.connecting) {
             // Check if dropped on an input port
             const inp = hitInputPort(mx, my);
             if (inp && inp.gate.id !== SIM.connecting.gateId) {
-                // Remove existing wire to this port
+                // Auto-replace: Enforce single driver per input port
                 SIM.wires = SIM.wires.filter(w => !(w.toGate === inp.gate.id && w.toPort === inp.portIdx));
-                SIM.wires.push({ fromGate: SIM.connecting.gateId, toGate: inp.gate.id, toPort: inp.portIdx });
+                SIM.wires.push({
+                    id: wireIdCounter++,
+                    fromGate: SIM.connecting.gateId,
+                    fromPort: 0,
+                    toGate: inp.gate.id,
+                    toPort: inp.portIdx,
+                    value: 0
+                });
                 evaluate();
             }
             SIM.connecting = null;
@@ -409,27 +631,55 @@ function initSimulator() {
     });
 
     canvas.addEventListener('dblclick', e => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
+        const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+        const mx = (e.clientX ?? 0) - (rect.left ?? 0);
+        const my = (e.clientY ?? 0) - (rect.top ?? 0);
         const hit = hitTest(mx, my);
         if (hit) {
-            // Remove gate and connected wires
+            // Remove gate and all connected wires
             SIM.gates = SIM.gates.filter(g => g.id !== hit.id);
             SIM.wires = SIM.wires.filter(w => w.fromGate !== hit.id && w.toGate !== hit.id);
             evaluate();
         }
     });
 
-    document.getElementById('clearSimBtn').addEventListener('click', () => {
-        SIM.gates = [];
-        SIM.wires = [];
-        SIM.connecting = null;
-        SIM.dragging = null;
-        drawAll();
-    });
+    const clearBtn = document.getElementById('clearSimBtn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            SIM.gates = [];
+            SIM.wires = [];
+            SIM.connecting = null;
+            SIM.dragging = null;
+            drawAll();
+        });
+    }
 
-    document.getElementById('evalSimBtn').addEventListener('click', evaluate);
+    const evalBtn = document.getElementById('evalSimBtn');
+    if (evalBtn) {
+        evalBtn.addEventListener('click', evaluate);
+    }
 
     drawAll();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        SIM,
+        GATE_W,
+        GATE_H,
+        PORT_R,
+        GATE_COLORS,
+        gateInputCount,
+        evalGate,
+        getPortPositions,
+        drawGate,
+        drawWire,
+        drawAll,
+        evaluate,
+        hitTest,
+        hitPort,
+        hitInputPort,
+        hitOutputPort,
+        initSimulator,
+    };
 }

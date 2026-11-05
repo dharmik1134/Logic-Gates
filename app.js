@@ -2,41 +2,57 @@
  * app.js — Tab routing, initialization, global coordination
  */
 
-document.addEventListener('DOMContentLoaded', () => {
-    // ── TAB ROUTING ──
-    const tabs = document.querySelectorAll('.tab-btn');
-    const panels = document.querySelectorAll('.tab-panel');
+let switchTab;
 
-    function switchTab(tabId) {
-        tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
-        panels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + tabId));
-        // Re-draw simulator when its tab is shown
-        if (tabId === 'simulator') {
-            setTimeout(() => {
-                const cvs = document.getElementById('simCanvas');
-                const rect = cvs.parentElement.getBoundingClientRect();
-                cvs.width = rect.width || 700;
-                cvs.height = 500;
-                drawAll();
-            }, 50);
-        }
-    }
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('DOMContentLoaded', () => {
+        // ── TAB ROUTING ──
+        const tabs = document.querySelectorAll('.tab-btn');
+        const panels = document.querySelectorAll('.tab-panel');
 
-    tabs.forEach(btn => {
-        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        switchTab = function(tabId) {
+            tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
+            panels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + tabId));
+            // Re-draw simulator and sync dimensions when its tab is shown
+            if (tabId === 'simulator') {
+                setTimeout(() => {
+                    const cvs = document.getElementById('simCanvas');
+                    if (cvs && cvs.parentElement) {
+                        const rect = cvs.parentElement.getBoundingClientRect ? cvs.parentElement.getBoundingClientRect() : { width: 700, height: 500 };
+                        cvs.width = rect.width || 700;
+                        cvs.height = 500;
+                        if (typeof drawAll === 'function') drawAll();
+                    }
+                }, 50);
+            }
+        };
+
+        tabs.forEach(btn => {
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        });
+
+        // ── INIT ALL MODULES ──
+        if (typeof initSolver === 'function') initSolver();
+        if (typeof initKmap === 'function') initKmap();
+        if (typeof initSimulator === 'function') initSimulator();
+        if (typeof initLearn === 'function') initLearn();
+
+        // ── KEYBOARD SHORTCUT: Ctrl+Enter (or Cmd+Enter) to solve ──
+        document.addEventListener('keydown', e => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+                if (activeTab === 'solver') {
+                    const solveBtn = document.getElementById('solveBtn');
+                    if (solveBtn) solveBtn.click();
+                }
+            }
+        });
     });
+}
 
-    // ── INIT ALL MODULES ──
-    initSolver();
-    initKmap();
-    initSimulator();
-    initLearn();
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        get switchTab() { return switchTab; }
+    };
+}
 
-    // ── KEYBOARD SHORTCUT: Ctrl+Enter to solve ──
-    document.addEventListener('keydown', e => {
-        if (e.ctrlKey && e.key === 'Enter') {
-            const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-            if (activeTab === 'solver') document.getElementById('solveBtn').click();
-        }
-    });
-});

@@ -7,22 +7,52 @@
    ────────────────────────────────────────── */
 function tokenize(expr) {
     const tokens = [];
+    const canEndFactor = t => t && (t.type === 'VAR' || t.type === 'CONST' || t.type === 'RPAREN' || t.type === 'POSTNOT');
+    const canStartFactor = t => t && (t.type === 'VAR' || t.type === 'CONST' || t.type === 'LPAREN' || t.type === 'NOT');
+
+    function pushToken(t) {
+        if (canStartFactor(t) && canEndFactor(tokens[tokens.length - 1])) {
+            tokens.push({ type: 'AND' });
+        }
+        tokens.push(t);
+    }
+
     let i = 0;
-    const s = expr.replace(/\s+/g, '');
+    const s = expr;
     while (i < s.length) {
         const c = s[i];
-        if (/[A-Za-z0-9]/.test(c)) {
-            let name = '';
-            while (i < s.length && /[A-Za-z0-9]/.test(s[i])) name += s[i++];
-            tokens.push({ type: 'VAR', name: name.toUpperCase() });
-            if (i < s.length && s[i] === "'") { i++; tokens.push({ type: 'POSTNOT' }); }
-        } else if (c === '!' || c === '~') { tokens.push({ type: 'NOT' }); i++; }
-        else if (c === '+') { tokens.push({ type: 'OR' }); i++; }
-        else if (c === '.' || c === '&') { tokens.push({ type: 'AND' }); i++; }
-        else if (c === '(') { tokens.push({ type: 'LPAREN' }); i++; }
-        else if (c === ')') { tokens.push({ type: 'RPAREN' }); i++; }
-        else if (c === "'") { tokens.push({ type: 'POSTNOT' }); i++; }
-        else { i++; }
+        if (/\s/.test(c)) {
+            i++;
+        } else if (c === '0' || c === '1') {
+            pushToken({ type: 'CONST', value: c === '1' ? 1 : 0 });
+            i++;
+        } else if (/[A-Za-z]/.test(c)) {
+            pushToken({ type: 'VAR', name: c.toUpperCase() });
+            i++;
+        } else if (c === '!' || c === '~') {
+            pushToken({ type: 'NOT' });
+            i++;
+        } else if (c === "'") {
+            pushToken({ type: 'POSTNOT' });
+            i++;
+        } else if (c === '+') {
+            pushToken({ type: 'OR' });
+            i++;
+        } else if (c === '^' || c === '⊕') {
+            pushToken({ type: 'XOR' });
+            i++;
+        } else if (c === '.' || c === '*' || c === '&') {
+            pushToken({ type: 'AND' });
+            i++;
+        } else if (c === '(') {
+            pushToken({ type: 'LPAREN' });
+            i++;
+        } else if (c === ')') {
+            pushToken({ type: 'RPAREN' });
+            i++;
+        } else {
+            i++;
+        }
     }
     return tokens;
 }
@@ -36,10 +66,19 @@ function parse(tokens) {
     const consume = () => tokens[pos++];
 
     function parseExpr() {
-        let left = parseTerm();
+        let left = parseXor();
         while (peek() && peek().type === 'OR') {
             consume();
-            left = { type: 'OR', left, right: parseTerm() };
+            left = { type: 'OR', left, right: parseXor() };
+        }
+        return left;
+    }
+
+    function parseXor() {
+        let left = parseTerm();
+        while (peek() && peek().type === 'XOR') {
+            consume();
+            left = { type: 'XOR', left, right: parseTerm() };
         }
         return left;
     }
@@ -48,9 +87,9 @@ function parse(tokens) {
         let left = parseFactor();
         while (peek()) {
             const t = peek();
-            if (!t || t.type === 'OR' || t.type === 'RPAREN') break;
+            if (!t || t.type === 'OR' || t.type === 'XOR' || t.type === 'RPAREN') break;
             if (t.type === 'AND') consume();
-            else if (t.type !== 'VAR' && t.type !== 'NOT' && t.type !== 'LPAREN') break;
+            else if (t.type !== 'VAR' && t.type !== 'CONST' && t.type !== 'NOT' && t.type !== 'LPAREN') break;
             left = { type: 'AND', left, right: parseFactor() };
         }
         return left;
@@ -80,6 +119,12 @@ function parse(tokens) {
             while (peek() && peek().type === 'POSTNOT') { consume(); node = { type: 'NOT', child: node }; }
             return node;
         }
+        if (peek().type === 'CONST') {
+            const val = consume().value;
+            let node = { type: 'CONST', value: val };
+            while (peek() && peek().type === 'POSTNOT') { consume(); node = { type: 'NOT', child: node }; }
+            return node;
+        }
         throw new Error('Unexpected token: ' + JSON.stringify(peek()));
     }
 
@@ -92,32 +137,41 @@ function parse(tokens) {
 function collectVars(node, vars = new Set()) {
     if (!node) return vars;
     if (node.type === 'VAR') { vars.add(node.name); return vars; }
+    if (node.type === 'CONST') return vars;
     if (node.type === 'NOT') return collectVars(node.child, vars);
-    collectVars(node.left, vars);
-    collectVars(node.right, vars);
+    if (node.left) collectVars(node.left, vars);
+    if (node.right) collectVars(node.right, vars);
     return vars;
 }
 
 function evalNode(node, assignment) {
+    if (node.type === 'CONST') return node.value ? 1 : 0;
     if (node.type === 'VAR') return assignment[node.name] ? 1 : 0;
     if (node.type === 'NOT') return evalNode(node.child, assignment) ? 0 : 1;
     if (node.type === 'AND') return evalNode(node.left, assignment) & evalNode(node.right, assignment);
     if (node.type === 'OR') return evalNode(node.left, assignment) | evalNode(node.right, assignment);
+    if (node.type === 'XOR') return evalNode(node.left, assignment) ^ evalNode(node.right, assignment);
     return 0;
 }
 
 function nodeToString(node) {
     if (!node) return '';
+    if (node.type === 'CONST') return String(node.value);
     if (node.type === 'VAR') return node.name;
     if (node.type === 'NOT') {
         const inner = nodeToString(node.child);
-        if (node.child.type === 'VAR') return inner + "'";
+        if (node.child.type === 'VAR' || node.child.type === 'CONST') return inner + "'";
         return "(" + inner + ")'";
     }
     if (node.type === 'AND') {
+        const l = (node.left.type === 'OR' || node.left.type === 'XOR') ? '(' + nodeToString(node.left) + ')' : nodeToString(node.left);
+        const r = (node.right.type === 'OR' || node.right.type === 'XOR') ? '(' + nodeToString(node.right) + ')' : nodeToString(node.right);
+        return l + r;
+    }
+    if (node.type === 'XOR') {
         const l = node.left.type === 'OR' ? '(' + nodeToString(node.left) + ')' : nodeToString(node.left);
         const r = node.right.type === 'OR' ? '(' + nodeToString(node.right) + ')' : nodeToString(node.right);
-        return l + r;
+        return l + '^' + r;
     }
     if (node.type === 'OR') return nodeToString(node.left) + '+' + nodeToString(node.right);
     return '';
@@ -180,6 +234,7 @@ function detectLaws(original, simplified, minterms, vars) {
 function mintermsToSOM(minterms, vars) {
     if (!minterms.length) return '0';
     const n = vars.length;
+    if (n === 0) return '1';
     return minterms.map(m => {
         let term = '';
         for (let i = 0; i < n; i++) term += ((m >> (n - 1 - i)) & 1) ? vars[i] : vars[i] + "'";
@@ -220,13 +275,36 @@ function quineMcCluskey(minterms, n, vars) {
     }
     const covered = new Set();
     const chosen = [];
-    unique.sort((a, b) => b.minterms.length - a.minterms.length);
-    for (const imp of unique) {
-        if (imp.minterms.some(m => !covered.has(m))) {
-            chosen.push(imp);
-            imp.minterms.forEach(m => covered.add(m));
+
+    // Step 1: Essential Prime Implicants (EPIs)
+    for (const m of minterms) {
+        const covering = unique.filter(imp => imp.minterms.includes(m));
+        if (covering.length === 1) {
+            const epi = covering[0];
+            if (!chosen.includes(epi)) {
+                chosen.push(epi);
+                epi.minterms.forEach(tm => covered.add(tm));
+            }
         }
     }
+
+    // Step 2: Cover remaining uncovered minterms
+    const remaining = unique.filter(imp => !chosen.includes(imp));
+    while (covered.size < minterms.length) {
+        remaining.sort((a, b) => {
+            const countA = a.minterms.filter(m => !covered.has(m)).length;
+            const countB = b.minterms.filter(m => !covered.has(m)).length;
+            return countB - countA;
+        });
+        const best = remaining[0];
+        if (!best) break;
+        if (best.minterms.filter(m => !covered.has(m)).length === 0) break;
+        chosen.push(best);
+        best.minterms.forEach(tm => covered.add(tm));
+        remaining.shift();
+    }
+
+    chosen.sort((a, b) => implicantToString(a, n, vars).localeCompare(implicantToString(b, n, vars)));
     return chosen.map(imp => implicantToString(imp, n, vars)).join('+') || '0';
 }
 
@@ -279,7 +357,7 @@ const BUBBLE_GATES = new Set(['NOT', 'NAND', 'NOR', 'XNOR']); // output bubble
 
 function convertAST(node, mode) {
     if (mode === 'all') return node;
-    if (node.type === 'VAR') return node;
+    if (node.type === 'VAR' || node.type === 'CONST') return node;
     if (node.type === 'NOT') {
         const child = convertAST(node.child, mode);
         if (mode === 'nand') return { type: 'NAND', left: child, right: child };
@@ -315,7 +393,24 @@ function convertAST(node, mode) {
             return { type: 'NOR', left: inner, right: inner };
         }
     }
-    // NAND/NOR/XOR etc — just recurse children
+    if (node.type === 'XOR') {
+        const l = convertAST(node.left, mode);
+        const r = convertAST(node.right, mode);
+        if (mode === 'nand') {
+            const nAB = { type: 'NAND', left: l, right: r };
+            const nA = { type: 'NAND', left: l, right: nAB };
+            const nB = { type: 'NAND', left: r, right: nAB };
+            return { type: 'NAND', left: nA, right: nB };
+        }
+        if (mode === 'nor') {
+            const norAB = { type: 'NOR', left: l, right: r };
+            const norA = { type: 'NOR', left: l, right: l };
+            const norB = { type: 'NOR', left: r, right: r };
+            const norAnorB = { type: 'NOR', left: norA, right: norB };
+            return { type: 'NOR', left: norAnorB, right: norAB };
+        }
+    }
+    // NAND/NOR etc — just recurse children
     const n = { ...node };
     if (n.left) n.left = convertAST(n.left, mode);
     if (n.right) n.right = convertAST(n.right, mode);
@@ -333,15 +428,16 @@ let _varPos = {};   // { varName: { x, y, drawn } }
 function gatherAllVars(node, out = new Set()) {
     if (!node) return out;
     if (node.type === 'VAR') { out.add(node.name); return out; }
+    if (node.type === 'CONST') { out.add(String(node.value)); return out; }
     if (node.type === 'NOT') return gatherAllVars(node.child, out);
-    gatherAllVars(node.left, out);
-    gatherAllVars(node.right, out);
+    if (node.left) gatherAllVars(node.left, out);
+    if (node.right) gatherAllVars(node.right, out);
     return out;
 }
 
 function layoutAST(node) {
-    if (node.type === 'VAR') {
-        // VAR takes no width — its position comes from _varPos
+    if (node.type === 'VAR' || node.type === 'CONST') {
+        // VAR / CONST takes no width — its position comes from _varPos
         node._w = 0; node._h = GH;
         return;
     }
@@ -362,8 +458,9 @@ function layoutAST(node) {
 let svgElements = [];
 
 function renderNode(node, x, y) {
-    if (node.type === 'VAR') {
-        const pos = _varPos[node.name];
+    if (node.type === 'VAR' || node.type === 'CONST') {
+        const name = node.type === 'CONST' ? String(node.value) : node.name;
+        const pos = _varPos[name];
         if (!pos) return;  // safety
 
         if (!pos.drawn) {
@@ -372,7 +469,7 @@ function renderNode(node, x, y) {
                 `<text x="${pos.x - 10}" y="${pos.y}"
           text-anchor="end" dominant-baseline="middle"
           font-family="JetBrains Mono,monospace" font-size="14"
-          font-weight="bold" fill="#94a3b8">${node.name}</text>`
+          font-weight="bold" fill="#94a3b8">${escHtml(name)}</text>`
             );
             // Draw a small horizontal stub to the right of the label
             svgElements.push(
@@ -445,7 +542,7 @@ let _segments = [];
 
 /* Store one axis-aligned connection as up to 3 orthogonal segments (H→V→H) */
 function routeWire(x1, y1, x2, y2) {
-    // Use 60% of the horizontal distance as the elbow column, snapped to integer
+    // 50% horizontal distance elbow column, snapped to integer
     const elbowX = Math.round(x1 + (x2 - x1) * 0.5);
     if (x1 !== elbowX) _segments.push({ x1, y1, x2: elbowX, y2: y1 });
     if (y1 !== y2) _segments.push({ x1: elbowX, y1, x2: elbowX, y2 });
@@ -476,7 +573,7 @@ function flushWires() {
                 bxs.push(v.x1);
             }
         });
-        bridgeMap.set(hi, bxs.sort((a, b) => a - b));
+        bridgeMap.set(hi, [...new Set(bxs)].sort((a, b) => a - b));
     });
 
     // Draw vertical segments plain
@@ -639,4 +736,28 @@ function buildTruthTableHTML(rows, vars) {
 
 function escHtml(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        tokenize,
+        parse,
+        collectVars,
+        evalNode,
+        nodeToString,
+        generateTruthTable,
+        quineMcCluskey,
+        detectLaws,
+        mintermsToSOM,
+        simplify,
+        convertAST,
+        layoutAST,
+        renderNode,
+        routeWire,
+        flushWires,
+        generateCircuitSVG,
+        buildTruthTableHTML,
+        getRandomExpression,
+        RANDOM_EXPRS,
+    };
 }
